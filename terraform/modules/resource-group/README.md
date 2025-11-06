@@ -235,74 +235,341 @@ export ARM_SUBSCRIPTION_ID="<subscription-id>"
 export ARM_TENANT_ID="<tenant-id>"
 ```
 
-## Complete Example
+## Complete Real-World Example
 
-Here's a complete example for your monorepo:
+### Example from monorepo-pipeline Repository
+
+This example shows how to use the module in a production monorepo structure with centralized configuration and environment-specific variables.
+
+**Repository**: https://github.com/ran130987wan/monorepo-pipeline.git
+
+**Folder Structure**:
+```
+monorepo-pipeline/
+└── platform/
+    └── terraform/
+        ├── global/
+        │   ├── locals.tf          # Local values and transformations
+        │   ├── main.tf            # Module configuration
+        │   ├── variables.tf       # Variable definitions
+        │   ├── outputs.tf         # Output definitions
+        │   ├── providers.tf       # Provider and backend configuration
+        │   └── versions.tf        # Version constraints
+        └── envs/
+            └── dev/
+                └── global-vars/
+                    └── main.tfvars    # Environment-specific values
+```
+
+#### Step 1: Define Local Variables (`platform/terraform/global/locals.tf`)
 
 ```hcl
-# main.tf in your monorepo-pipeline repository
-
-terraform {
-  required_version = ">= 1.12.0"
+locals {
+  # Define resource group types for different workloads
+  resource_groups_map = {
+    container = {
+      name = "container"
+      type = "container"
+    },
+    web = {
+      name = "web"
+      type = "web"
+    },
+    security = {
+      name = "security"
+      type = "security"
+    },
+    data = {
+      name = "data"
+      type = "data"
+    },
+    monitoring = {
+      name = "monitoring"
+      type = "monitoring"
+    },
+    network = {
+      name = "network"
+      type = "network"
+    },
+    platform = {
+      name = "platform"
+      type = "platform"
+    },
+    integration = {
+      name = "integration"
+      type = "integration"
+    }
+  }
   
+  # Get region code from mapping
+  region_code = var.azure_region_map[var.global_config.location]
+  
+  # Enable locks for production and staging environments
+  enable_resource_group_lock = var.global_config.environment == "prod" || var.global_config.environment == "stage" ? true : false
+}
+```
+
+#### Step 2: Configure the Module (`platform/terraform/global/main.tf`)
+
+```hcl
+# Transform the resource groups map into the format expected by the module
+locals {
+  resource_groups = [
+    for rg in locals.resource_groups_map : {
+      name     = "${var.global_config.compact_prefix}-${rg.name}-rg-${var.global_config.environment}"
+      location = var.global_config.location
+      locks    = locals.enable_resource_group_lock
+      tags     = var.global_config.tags
+    }
+  ]
+}
+
+# Call the resource-group module from terraform-modules repository
+module "resource_groups" {
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
+  
+  resource_groups = locals.resource_groups
+}
+```
+
+#### Step 3: Define Variables (`platform/terraform/global/variables.tf`)
+
+```hcl
+variable "global_config" {
+  description = "Global configuration for resource naming and tagging"
+  type = object({
+    prefix         = string
+    compact_prefix = string
+    environment    = string
+    location       = string
+    region_code    = string
+    tags           = map(string)
+  })
+}
+
+variable "azure_region_map" {
+  description = "Mapping of Azure region names to short codes"
+  type        = map(string)
+  default = {
+    "eastus"             = "eus"
+    "eastus2"            = "eus2"
+    "westus"             = "wus"
+    "westus2"            = "wus2"
+    "centralus"          = "cus"
+    "southcentralus"     = "scus"
+    "northcentralus"     = "ncus"
+    "westcentralus"      = "wcus"
+    "uksouth"            = "uks"
+    "ukwest"             = "ukw"
+    "northeurope"        = "neu"
+    "westeurope"         = "weu"
+    "southeastasia"      = "sea"
+    "eastasia"           = "ea"
+    "australiaeast"      = "aue"
+    "australiasoutheast" = "ause"
+    "brazilsouth"        = "brs"
+    "brazilsoutheast"    = "brse"
+    "canadacentral"      = "canc"
+    "canadaeast"         = "cane"
+    "indiawest"          = "inw"
+    "indiasouth"         = "ins"
+    "indianorth"         = "inn"
+    "koreacentral"       = "korc"
+    "koreasouth"         = "kors"
+    "southafricanorth"   = "san"
+    "southafricawest"    = "saw"
+    "japaneast"          = "jpe"
+    "japanwest"          = "jpw"
+    "swedencentral"      = "swc"
+  }
+}
+```
+
+#### Step 4: Define Outputs (`platform/terraform/global/outputs.tf`)
+
+```hcl
+# Output all resource group IDs
+output "resource_group_ids" {
+  description = "Map of resource group names to their Azure resource IDs"
+  value       = module.resource_groups.resource_group_ids
+}
+
+# Output all resource group names
+output "resource_group_names" {
+  description = "Map of resource group names to their display names"
+  value       = module.resource_groups.resource_group_names
+}
+
+# Output specific resource groups for easy reference in other modules
+output "container_rg_id" {
+  description = "Resource ID of the container resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-container-rg-${var.global_config.environment}"]
+}
+
+output "web_rg_id" {
+  description = "Resource ID of the web resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-web-rg-${var.global_config.environment}"]
+}
+
+output "data_rg_id" {
+  description = "Resource ID of the data resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-data-rg-${var.global_config.environment}"]
+}
+
+output "network_rg_id" {
+  description = "Resource ID of the network resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-network-rg-${var.global_config.environment}"]
+}
+
+output "security_rg_id" {
+  description = "Resource ID of the security resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-security-rg-${var.global_config.environment}"]
+}
+
+output "monitoring_rg_id" {
+  description = "Resource ID of the monitoring resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-monitoring-rg-${var.global_config.environment}"]
+}
+
+output "platform_rg_id" {
+  description = "Resource ID of the platform resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-platform-rg-${var.global_config.environment}"]
+}
+
+output "integration_rg_id" {
+  description = "Resource ID of the integration resource group"
+  value       = module.resource_groups.resource_group_ids["${var.global_config.compact_prefix}-integration-rg-${var.global_config.environment}"]
+}
+```
+
+#### Step 5: Configure Providers and Backend (`platform/terraform/global/providers.tf`)
+
+```hcl
+terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.3"
+    }
   }
+  required_version = ">= 1.12.2"
 }
 
 provider "azurerm" {
-  features {}
-}
-
-module "resource_groups" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
-
-  resource_groups = [
-    {
-      name     = "rg-frontend-prod-eastus"
-      location = "eastus"
-      locks    = true
-      tags = {
-        Environment = "Production"
-        Component   = "Frontend"
-        ManagedBy   = "Terraform"
-      }
-    },
-    {
-      name     = "rg-backend-prod-eastus"
-      location = "eastus"
-      locks    = true
-      tags = {
-        Environment = "Production"
-        Component   = "Backend"
-        ManagedBy   = "Terraform"
-      }
-    },
-    {
-      name     = "rg-shared-dev-westus"
-      location = "westus"
-      locks    = false
-      tags = {
-        Environment = "Development"
-        Component   = "Shared"
-        ManagedBy   = "Terraform"
-      }
+  features {
+    resource_group {
+      prevent_deletion_if_contains_resources = true
     }
-  ]
+  }
+  resource_provider_registrations = "none"
+  subscription_id                 = "47a1099f-55eb-4047-97d4-4d8516f93798"
 }
 
-# Use outputs in other resources
-output "rg_ids" {
-  value = module.resource_groups.resource_group_ids
-}
-
-output "rg_names" {
-  value = module.resource_groups.resource_group_names
+# Configure remote state backend in Azure Storage
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "vdc-cp-admin-cus-bootstrap-rg-dev"
+    storage_account_name = "vdccpadmsacusdevtfbe"
+    container_name       = "tfstatecpadmin"
+    key                  = "dev-global.terraform.tfstate"
+  }
 }
 ```
+
+#### Step 6: Environment Variables (`platform/terraform/envs/dev/global-vars/main.tfvars`)
+
+```hcl
+global_config = {
+  prefix         = "vdc-cp-admin"
+  compact_prefix = "vdccpadm"
+  environment    = "dev"
+  location       = "centralus"
+  region_code    = "cus"
+  tags = {
+    Environment = "Development"
+    ManagedBy   = "Terraform"
+    Project     = "Platform-Admin"
+    CostCenter  = "Engineering"
+  }
+}
+```
+
+#### Step 7: Deployment Commands
+
+```bash
+# Navigate to the global directory
+cd platform/terraform/global
+
+# Initialize Terraform (downloads providers and module)
+terraform init
+
+# Validate configuration
+terraform validate
+
+# Plan with dev environment variables
+terraform plan -var-file="../envs/dev/global-vars/main.tfvars"
+
+# Apply with dev environment variables
+terraform apply -var-file="../envs/dev/global-vars/main.tfvars"
+
+# View outputs
+terraform output
+```
+
+### Expected Results
+
+When you run `terraform apply`, this configuration will create **8 resource groups**:
+
+```
+vdccpadm-container-rg-dev       (no lock - dev environment)
+vdccpadm-web-rg-dev             (no lock - dev environment)
+vdccpadm-security-rg-dev        (no lock - dev environment)
+vdccpadm-data-rg-dev            (no lock - dev environment)
+vdccpadm-monitoring-rg-dev      (no lock - dev environment)
+vdccpadm-network-rg-dev         (no lock - dev environment)
+vdccpadm-platform-rg-dev        (no lock - dev environment)
+vdccpadm-integration-rg-dev     (no lock - dev environment)
+```
+
+For **production**, change the tfvars:
+```hcl
+global_config = {
+  environment = "prod"  # This enables locks automatically
+  # ... other config
+}
+```
+
+This will create resource groups **with management locks** to prevent accidental deletion.
+
+### Using Outputs in Other Modules
+
+Reference the created resource groups in other Terraform configurations:
+
+```hcl
+# In another module (e.g., platform/terraform/storage/main.tf)
+resource "azurerm_storage_account" "example" {
+  name                     = "examplestorageacct"
+  resource_group_name      = data.terraform_remote_state.global.outputs.data_rg_id
+  location                 = var.global_config.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+```
+
+### Key Benefits of This Approach
+
+1. ✅ **Centralized Configuration** - All resource groups defined in one place
+2. ✅ **Environment-Specific Behavior** - Locks enabled for prod/stage, disabled for dev
+3. ✅ **Consistent Naming** - Uses naming convention with prefix, type, and environment
+4. ✅ **DRY Principle** - Loops through resource group types instead of repeating code
+5. ✅ **Remote State** - Backend configured for team collaboration
+6. ✅ **Version Pinning** - Uses specific module version for stability
+7. ✅ **Easy Scaling** - Add new resource group types by updating the map
+8. ✅ **Region Flexibility** - Easy to deploy to different Azure regions
 
 ## How It Works
 
