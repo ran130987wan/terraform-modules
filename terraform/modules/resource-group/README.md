@@ -616,6 +616,86 @@ Or view on GitHub:
 |---------|--------|--------------|-------|
 | `resource-group/v1.0.0` | ✅ Current | 2025-11-06 | Initial release with resource groups and management locks |
 
+## Code Ownership & Access Control
+
+This repository uses GitHub's CODEOWNERS feature to manage code ownership and permissions.
+
+### CODEOWNERS Configuration
+
+The `.github/CODEOWNERS` file defines ownership for different parts of the repository:
+
+```
+# Platform Team owns all Terraform modules
+/terraform/                     @ran130987wan
+
+# Specific module ownership
+/terraform/modules/resource-group/      @ran130987wan
+```
+
+### Access Rules
+
+- ✅ **Platform Engineers** - Full access to `/terraform/` directory
+  - Can create, modify, and delete Terraform modules
+  - Required as reviewers for PR approval
+  - Responsible for module quality and standards
+
+- ⚠️ **Other Contributors** - Restricted access to `/terraform/`
+  - Can view and use modules
+  - Cannot directly modify Terraform modules
+  - Must submit PRs that require platform team approval
+
+### PR Labels for Code Ownership
+
+When creating pull requests, use these labels to identify the responsible developer:
+
+| Label | Purpose | Usage |
+|-------|---------|-------|
+| `platform` | Indicates platform team changes | All terraform module changes |
+| `codeowner: @ran130987wan` | Identifies the developer/owner | Track individual responsibility |
+
+#### Creating a PR with Labels
+
+```bash
+# Create PR with platform and code owner labels
+gh pr create \
+  --base main \
+  --head feature-branch \
+  --title "Add new module" \
+  --label platform \
+  --label "codeowner: @ran130987wan"
+
+# Or add labels after PR creation
+gh pr edit <PR-NUMBER> --add-label platform
+gh pr edit <PR-NUMBER> --add-label "codeowner: @ran130987wan"
+```
+
+### Automatic Review Requests
+
+When a PR modifies files in the `/terraform/` directory:
+1. GitHub automatically requests review from code owners
+2. The PR cannot be merged without code owner approval (if branch protection is enabled)
+3. Code owners receive notifications about changes
+
+### Adding New Code Owners
+
+As the team grows, update `.github/CODEOWNERS`:
+
+```
+# Example: Multiple code owners
+/terraform/modules/resource-group/      @ran130987wan @platform-team
+
+# Example: Team ownership
+/terraform/modules/                     @organization/platform-engineers
+```
+
+### Best Practices for Code Ownership
+
+1. **Always add appropriate labels** when creating PRs
+2. **Tag the code owner** in PR descriptions for critical changes
+3. **Wait for code owner approval** before merging
+4. **Document changes** in commit messages for audit trails
+5. **Test thoroughly** before requesting review from code owners
+
 ## Contributing
 
 To contribute to this module:

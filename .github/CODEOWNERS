@@ -1,0 +1,23 @@
+# CODEOWNERS file for terraform-modules repository
+# 
+# This file defines code ownership for different parts of the repository.
+# Code owners are automatically requested for review when someone opens a pull request
+# that modifies code they own.
+#
+# Documentation: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo (fallback)
+# *       @ran130987wan
+
+# Platform Team owns all Terraform modules
+# Platform engineers have exclusive rights to modify the terraform/ directory
+/terraform/                     @ran130987wan
+
+# Specific module ownership (can be customized as team grows)
+/terraform/modules/resource-group/      @ran130987wan
+
+# Documentation at root level
+/README.md                      @ran130987wan
+
+# GitHub configuration files
+/.github/                       @ran130987wan
