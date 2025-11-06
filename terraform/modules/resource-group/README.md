@@ -21,15 +21,25 @@ terraform/modules/resource-group/
 └── README.md         # This file
 ```
 
+## Version Information
+
+**Current Stable Version**: `resource-group/v1.0.0`
+
+This module follows a versioning scheme where each module is tagged independently:
+- Tag format: `<module-name>/v<version>`
+- Example: `resource-group/v1.0.0`
+
 ## Usage
 
 ### From Your Monorepo (ran130987wan/monorepo-pipeline)
 
-To use this module from your calling repository, reference it as a Git source:
+**⚠️ Important**: Always use the tagged version in production to ensure stability and reproducibility.
+
+#### Recommended: Using Tagged Version (Production)
 
 ```hcl
 module "resource_groups" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
   resource_groups = [
     {
@@ -56,19 +66,20 @@ module "resource_groups" {
 }
 ```
 
-### Referencing Specific Versions
-
-For production use, always pin to a specific tag or commit:
+### Referencing Different Versions
 
 ```hcl
-# Using a Git tag
-source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=v1.0.0"
+# ✅ RECOMMENDED: Using the module-specific tag (Production)
+source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
-# Using a specific commit
-source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=abc123def"
+# ✅ Using a specific version when available
+source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.1.0"
 
-# Using a branch (for testing only)
-source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=feature-branch"
+# ⚠️ Using main branch (not recommended for production)
+source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+
+# ⚠️ Using a feature branch (for testing only)
+source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=ranjit/modules"
 ```
 
 ### Local Development
@@ -247,7 +258,7 @@ provider "azurerm" {
 }
 
 module "resource_groups" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
   resource_groups = [
     {
@@ -307,7 +318,7 @@ output "rg_names" {
 
 ```hcl
 module "production_rgs" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
   resource_groups = [
     {
@@ -327,7 +338,7 @@ module "production_rgs" {
 
 ```hcl
 module "development_rgs" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
   resource_groups = [
     {
@@ -347,7 +358,7 @@ module "development_rgs" {
 
 ```hcl
 module "multi_region_rgs" {
-  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=main"
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
 
   resource_groups = [
     {
@@ -385,7 +396,7 @@ module "multi_region_rgs" {
 
 4. **Pin Module Versions**: In production, always reference a specific version:
    ```hcl
-   source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=v1.0.0"
+   source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
    ```
 
 5. **Use Outputs for Resource Dependencies**: Reference created resource groups using module outputs rather than hardcoding names.
@@ -466,6 +477,145 @@ terraform destroy
 
 **Solution**: Use `az account list-locations -o table` to see available regions for your subscription.
 
+## Module Development & Release Process
+
+This section explains how this module is developed, tagged, and released.
+
+### Branching Strategy
+
+- **`main`** - Stable, production-ready code
+- **Feature branches** - Development work (e.g., `ranjit/modules`)
+
+### Tagging Convention
+
+Each module in this repository uses independent version tags:
+- **Format**: `<module-name>/v<major>.<minor>.<patch>`
+- **Example**: `resource-group/v1.0.0`
+
+This allows each module to have its own version lifecycle.
+
+### Release Workflow
+
+#### 1. Development Phase
+```bash
+# Create or switch to a feature branch
+git checkout -b ranjit/modules
+
+# Make changes to the module
+# Edit files in terraform/modules/resource-group/
+
+# Commit changes
+git add terraform/modules/resource-group/
+git commit -m "Add resource group module with management locks"
+
+# Push to remote
+git push origin ranjit/modules
+```
+
+#### 2. Creating a Release Tag
+```bash
+# Ensure you're on the correct branch
+git checkout ranjit/modules
+
+# Create an annotated tag for the module version
+git tag -a resource-group/v1.0.0 -m "Release resource-group module v1.0.0 - Initial release with Azure Resource Group and management lock support"
+
+# Push the tag to remote
+git push origin resource-group/v1.0.0
+```
+
+#### 3. Creating a Pull Request
+```bash
+# Create PR using GitHub CLI
+gh pr create \
+  --base main \
+  --head ranjit/modules \
+  --title "Add Azure Resource Group Module v1.0.0" \
+  --label platform
+
+# Or create PR via GitHub web interface
+# https://github.com/ran130987wan/terraform-modules/compare/main...ranjit/modules
+```
+
+#### 4. Testing the Module
+
+Before merging, test the module in your monorepo:
+
+```hcl
+# In your monorepo-pipeline repository
+module "test_resource_groups" {
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
+
+  resource_groups = [
+    {
+      name     = "rg-test-validation"
+      location = "eastus"
+      locks    = false
+      tags     = { Environment = "Test" }
+    }
+  ]
+}
+```
+
+Run Terraform commands:
+```bash
+terraform init
+terraform plan
+terraform apply
+# Verify resources created successfully
+terraform destroy  # Clean up test resources
+```
+
+#### 5. Merging to Main
+
+Once testing is complete:
+1. Review the PR at https://github.com/ran130987wan/terraform-modules/pull/1
+2. Ensure all changes are documented
+3. Merge the PR to `main` branch
+4. The tag `resource-group/v1.0.0` remains available for use
+
+### Version Updates
+
+When updating the module:
+
+```bash
+# Make changes on a feature branch
+git checkout -b update/resource-group-v1.1.0
+
+# After changes, create a new tag
+git tag -a resource-group/v1.1.0 -m "Release resource-group module v1.1.0 - Added support for X"
+
+# Push the new tag
+git push origin resource-group/v1.1.0
+
+# Create PR for review and merge
+gh pr create --base main --head update/resource-group-v1.1.0 --label platform
+```
+
+### Checking Available Versions
+
+To see all available versions of this module:
+
+```bash
+# List all tags for this module
+git tag -l "resource-group/*"
+
+# Output example:
+# resource-group/v1.0.0
+# resource-group/v1.1.0
+# resource-group/v2.0.0
+```
+
+Or view on GitHub:
+- Tags: https://github.com/ran130987wan/terraform-modules/tags
+- Releases: https://github.com/ran130987wan/terraform-modules/releases
+
+### Current Release Status
+
+| Version | Status | Release Date | Notes |
+|---------|--------|--------------|-------|
+| `resource-group/v1.0.0` | ✅ Current | 2025-11-06 | Initial release with resource groups and management locks |
+
 ## Contributing
 
 To contribute to this module:
@@ -492,9 +642,81 @@ Maintained by the Platform Team
 
 ## Changelog
 
-### Version 1.0.0
-- Initial release
-- Support for multiple resource groups
-- Optional management locks
-- Tag support
-- Output maps for IDs and names
+### resource-group/v1.0.0 (2025-11-06)
+
+**Initial Release**
+
+Features:
+- ✅ Create multiple Azure Resource Groups from a single configuration
+- ✅ Optional management locks with `CanNotDelete` level
+- ✅ Flexible tagging support per resource group
+- ✅ Output maps for resource group IDs and names
+- ✅ Comprehensive documentation with usage examples
+
+Resources:
+- `azurerm_resource_group.this` - Creates resource groups
+- `azurerm_management_lock.rg_lock` - Creates optional locks
+
+Requirements:
+- Terraform >= 1.12.0
+- AzureRM Provider ~> 4.0
+
+Documentation:
+- Complete README with examples
+- Usage instructions for monorepo integration
+- Git tag-based versioning guide
+- Troubleshooting section
+
+Breaking Changes:
+- None (initial release)
+
+---
+
+## Quick Start Guide
+
+For users who want to get started quickly:
+
+### Step 1: Add Module to Your Terraform Configuration
+
+```hcl
+module "resource_groups" {
+  source = "git::https://github.com/ran130987wan/terraform-modules.git//terraform/modules/resource-group?ref=resource-group/v1.0.0"
+
+  resource_groups = [
+    {
+      name     = "rg-myapp-prod"
+      location = "eastus"
+      locks    = true
+      tags     = { Environment = "Production" }
+    }
+  ]
+}
+```
+
+### Step 2: Initialize Terraform
+
+```bash
+terraform init
+```
+
+### Step 3: Plan and Apply
+
+```bash
+terraform plan
+terraform apply
+```
+
+### Step 4: Reference Outputs
+
+```hcl
+output "my_rg_id" {
+  value = module.resource_groups.resource_group_ids["rg-myapp-prod"]
+}
+```
+
+---
+
+**Need Help?** 
+- 📖 Read the full documentation above
+- 🐛 Report issues: https://github.com/ran130987wan/terraform-modules/issues
+- 💬 Discussions: Contact the Platform Team
