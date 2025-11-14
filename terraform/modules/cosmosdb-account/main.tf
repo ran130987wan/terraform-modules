@@ -1,12 +1,29 @@
+##############################################################################
+# Azure Cosmos DB Account Module
+#
+# This module creates and configures an Azure Cosmos DB account with support
+# for multiple APIs (SQL, MongoDB, Cassandra, Gremlin, Table).
+#
+# Features:
+# - Multi-region geo-replication
+# - Automatic failover
+# - Multiple consistency levels
+# - Serverless and provisioned throughput modes
+# - Backup policies (Periodic and Continuous)
+# - Free tier support
+##############################################################################
+
 resource "azurerm_cosmosdb_account" "this" {
+  # Basic account configuration
   name                       = var.cosmosdb.name
-  location                   = var.cosmosdb.location
+  location                   = var.cosmosdb.location        # Primary region
   resource_group_name        = var.cosmosdb.resource_group_name
-  offer_type                 = var.cosmosdb.offer_type
-  kind                       = var.cosmosdb.kind
+  offer_type                 = var.cosmosdb.offer_type      # Always "Standard"
+  kind                       = var.cosmosdb.kind            # GlobalDocumentDB, MongoDB, etc.
   automatic_failover_enabled = try(var.cosmosdb.automatic_failover_enabled, false)
 
-  # Consistency policy (extend only when BoundedStaleness requested)
+  # Consistency policy - defines read consistency guarantees
+  # Levels: Strong, BoundedStaleness, Session, ConsistentPrefix, Eventual
   consistency_policy {
     consistency_level       = var.cosmosdb.consistency_level.name
     max_interval_in_seconds = var.cosmosdb.consistency_level.max_interval_in_seconds

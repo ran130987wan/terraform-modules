@@ -1,3 +1,10 @@
+##############################################################################
+# AKS Node Pool Module - Outputs
+#
+# These outputs expose key attributes of the created node pool for reference
+# and for use by other modules or monitoring systems.
+##############################################################################
+
 output "id" {
   description = "Node pool resource ID."
   value       = azurerm_kubernetes_cluster_node_pool.this.id
@@ -14,7 +21,7 @@ output "effective_node_count" {
 }
 
 output "autoscaling" {
-  description = "Autoscaling settings as requested."
+  description = "Autoscaling settings as requested (enabled status, min/max bounds)."
   value = var.aks_node.enable_auto_scaling ? {
     enabled = true
     min     = var.aks_node.min_count

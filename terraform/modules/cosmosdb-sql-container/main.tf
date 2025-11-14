@@ -1,15 +1,29 @@
+##############################################################################
+# Azure Cosmos DB SQL Container Module
+#
+# This module creates a container (collection) within a Cosmos DB SQL database.
+# Containers store JSON documents and are the unit of scalability.
+#
+# Features:
+# - Partition key configuration for horizontal scaling
+# - Manual or autoscale throughput
+# - Indexing policy customization
+# - Unique key constraints
+# - TTL (Time-To-Live) support
+##############################################################################
+
 resource "azurerm_cosmosdb_sql_container" "this" {
   name                = var.container.name
   resource_group_name = var.cosmosdb_account.resource_group_name
   account_name        = var.cosmosdb_account.name
   database_name       = var.container.database_name
 
-  # Provider requires list attribute partition_key_paths
-  partition_key_paths   = [var.container.partition_key_path]
-  partition_key_version = try(var.container.partition_key_version, null)
-  default_ttl           = try(var.container.default_ttl, null)
+  # Partition key configuration - critical for performance and scaling
+  partition_key_paths   = [var.container.partition_key_path]                # e.g., ["/userId"]
+  partition_key_version = try(var.container.partition_key_version, null)    # 1 (default) or 2 (hierarchical)
+  default_ttl           = try(var.container.default_ttl, null)              # Auto-delete documents after seconds
 
-  # Throughput vs autoscale: if max_throughput is set, manual throughput must be null
+  # Throughput: use manual throughput only when autoscale is not configured
   throughput = try(var.container.max_throughput, null) != null ? null : try(var.container.throughput, null)
 
   dynamic "autoscale_settings" {
