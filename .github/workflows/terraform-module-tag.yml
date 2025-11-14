@@ -128,7 +128,11 @@ jobs:
       - name: Determine bump type from PR labels / commit message
         id: bump
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}  # GitHub token for API access
+          # GitHub token for API access - authenticate GitHub CLI commands
+          # NOTE: You must create a Personal Access Token (PAT) or use GitHub App token
+          # and add it to repository secrets as 'GH_TOKEN' with 'repo' scope
+          # Alternative: use built-in ${{ secrets.GITHUB_TOKEN }} if it has sufficient permissions
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         shell: bash
         run: |
           # Enable strict error handling
@@ -290,8 +294,10 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         env:
           # Set GitHub token as environment variable for authentication
-          # secrets.GH_TOKEN must be configured in repository/organization secrets
-          # This token needs 'contents: write' permission to push tags
+          # NOTE: You must create 'GH_TOKEN' secret in repository settings:
+          # Repository Settings -> Secrets and variables -> Actions -> New repository secret
+          # Token must have 'contents: write' permission to push tags
+          # Alternative: use built-in ${{ secrets.GITHUB_TOKEN }} if workflow has write permissions
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         shell: bash  # Explicitly use bash shell
         run: |
