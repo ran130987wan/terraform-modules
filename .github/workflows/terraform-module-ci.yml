@@ -1,139 +1,271 @@
+# GitHub Actions workflow name - displayed in the Actions tab and workflow run UI
 name: "Terraform Module CI (PR)"
 
+# Workflow trigger configuration - defines when this workflow executes
 on:
+    # Only trigger on pull request events (not on direct pushes)
     pull_request:
+        # Only run when PR targets the master branch
         branches: [master] 
+        # Only trigger if files in these paths are modified
         paths:
+            # Trigger if any Terraform module files change
             - "terraform/modules/**"
+            # Trigger if any Terraform workflow files change (including this file)
             - ".github/workflows/terraform-*"
 
+# GitHub Actions permissions - controls what this workflow can access/modify
 permissions:
+    # Write permission needed to push README updates back to the PR branch
     contents: write # <-- was read; needs write to push README updates
+    # Write permission to add comments/reviews to pull requests
     pull-requests: write
 
+# Jobs section - contains all jobs this workflow will execute
 jobs:
+    # First job: Detect which Terraform modules have been modified in this PR
     detect_changed_modules:
+        # Human-readable name displayed in GitHub Actions UI
         name: Detect changed modules
+        # Run this job on the latest Ubuntu runner image
         runs-on: ubuntu-latest
+        # Output variables that other jobs can access via needs.<job>.outputs.<name>
         outputs:
+            # Export the matrix JSON to be consumed by lint_validate job
             matrix: ${{ steps.collect.outputs.matrix }}
         steps:
+            # Checkout the repository code
             - uses: actions/checkout@v4
               with:
+                  # Fetch complete git history (not just latest commit)
+                  # Required to compare PR branch against base branch
                   fetch-depth: 0
 
+            # Step to identify which files changed in this PR
             - id: diff
               name: Find changed files
               run: |
+                  # Fetch the base branch (target branch of PR) with shallow depth for speed
+                  # ${{ github.base_ref }} is the branch name the PR targets (e.g., "master")
                   git fetch origin ${{ github.base_ref }} --depth=1
+                  # Compare base branch to current HEAD and list changed file paths
+                  # --name-only: only show file names, not diff content
+                  # origin/${{ github.base_ref }}...HEAD: three-dot syntax compares merge base to HEAD
+                  # > /tmp/changed.txt: redirect output to temporary file
                   git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed.txt
+                  # Print changed files to workflow logs for debugging/troubleshooting
                   echo "Changed files:"
+                  # Display contents of the changed files list
                   cat /tmp/changed.txt
 
+            # Parse changed files and build a JSON matrix of affected modules
             - id: collect
               name: Collect changed module directories into a matrix
               run: |
+                  # Extract unique module names using AWK:
+                  # -F/: use forward slash as field separator
+                  # /^terraform\/modules\/[^/]+\//: regex matches paths starting with terraform/modules/<modulename>/
+                  # {print $3}: print field 3 (the module name after terraform/modules/)
+                  # | sort -u: sort results and remove duplicates (-u means unique)
                   mods=$(awk -F/ '/^terraform\/modules\/[^/]+\// {print $3}' /tmp/changed.txt | sort -u)
+                  # Check if no modules were found (empty variable)
                   if [ -z "$mods" ]; then
+                    # Log that no module changes were detected
                     echo "No module changes detected."
+                    # Create empty JSON matrix (will cause lint_validate job to be skipped)
                     echo '{"include":[]}' > /tmp/matrix.json
                   else
+                    # Log which modules were changed
                     echo "Modules changed: $mods"
+                    # Start building JSON matrix structure
                     printf '{"include":[' > /tmp/matrix.json
+                    # Track whether this is the first element (for comma placement)
                     first=1
+                    # Iterate through each module name in space-separated list
                     for m in $mods; do
+                      # Add comma separator before all elements except the first
                       if [ $first -eq 0 ]; then printf ',' >> /tmp/matrix.json; fi
+                      # Create JSON object with module name and full path
+                      # Example: {"module":"aks","path":"terraform/modules/aks"}
                       printf '{"module":"%s","path":"terraform/modules/%s"}' "$m" "$m" >> /tmp/matrix.json
+                      # After first iteration, set flag to start adding commas
                       first=0
                     done
+                    # Close the JSON array structure
                     printf ']}' >> /tmp/matrix.json
                   fi
+                  # Write matrix to GitHub Actions output so other jobs can access it
+                  # $GITHUB_OUTPUT is a special file GitHub Actions reads for step outputs
                   echo "matrix=$(cat /tmp/matrix.json)" >> $GITHUB_OUTPUT
 
+    # Second job: Run linting and validation checks on each changed module
     lint_validate:
+        # Human-readable name with module variable interpolation
         name: Lint & Validate (${{ matrix.module }})
+        # Wait for detect_changed_modules job to complete before starting
         needs: detect_changed_modules
+        # Only run if the matrix is not empty (i.e., modules were changed)
+        # fromJson() parses the matrix string, then checks if include array has elements
         if: ${{ fromJson(needs.detect_changed_modules.outputs.matrix).include != null && fromJson(needs.detect_changed_modules.outputs.matrix).include[0] != null }}
+        # Run on latest Ubuntu runner
         runs-on: ubuntu-latest
+        # Matrix strategy: run this job once for each module in the matrix
         strategy:
+            # Don't cancel other matrix jobs if one fails
             fail-fast: false
+            # Use the matrix output from the previous job (contains module names and paths)
             matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}
+        # Set default working directory for all run steps in this job
         defaults:
             run:
+                # Each matrix iteration uses its module's path (e.g., terraform/modules/aks)
                 working-directory: ${{ matrix.path }}
 
         steps:
-            # Checkout the PR branch (not detached) so we can push README updates
+            # Checkout the PR branch (not in detached HEAD state)
+            # This allows us to commit and push README changes back to the PR
             - uses: actions/checkout@v4
               with:
+                  # Fetch full history for accurate diff and version comparisons
                   fetch-depth: 0
+                  # Check out the PR's source branch (head ref)
+                  # github.event.pull_request.head.ref is the branch name (e.g., "feature/my-changes")
                   ref: ${{ github.event.pull_request.head.ref }}
+                  # Use the PR's source repository (important for forks)
+                  # github.event.pull_request.head.repo.full_name is "owner/repo"
                   repository: ${{ github.event.pull_request.head.repo.full_name }}
+                  # Keep git credentials so later steps can push commits
                   persist-credentials: true
+            # Install Terraform CLI tool
             - name: Setup Terraform
               uses: hashicorp/setup-terraform@v3
               with:
+                  # Pin to specific Terraform version for consistency
                   terraform_version: "1.12.2"
 
+            # Check if Terraform files are properly formatted
             - name: Terraform fmt (check)
+              # terraform fmt: format Terraform files to canonical style
+              # -check: don't modify files, just exit with error if formatting needed
+              # -recursive: check all .tf files in subdirectories
+              # This step will fail if any files need formatting
               run: terraform fmt -check -recursive
 
+            # Ensure README.md exists and has terraform-docs injection markers
             - name: Ensure README has inject markers
               run: |
+                  # Store README filename in variable for reuse
                   FILE="README.md"
+                  # Check if README doesn't exist OR doesn't contain injection markers
+                  # [ ! -f "$FILE" ]: test if file does NOT exist
+                  # ! grep -q: quiet grep returns failure if pattern NOT found
+                  # "<!-- BEGIN_TF_DOCS -->": marker where terraform-docs will inject content
                   if [ ! -f "$FILE" ] || ! grep -q "<!-- BEGIN_TF_DOCS -->" "$FILE"; then
+                  # Create new README with module name as heading
                   echo "# ${{ matrix.module }}" > "$FILE"
+                  # Append blank line and terraform-docs injection markers using a here-document
+                  # { ... } groups commands to append together
                   {
-                      echo
-                      echo "<!-- BEGIN_TF_DOCS -->"
-                      echo "<!-- END_TF_DOCS -->"
+                      echo  # Add blank line
+                      echo "<!-- BEGIN_TF_DOCS -->"  # Opening marker
+                      echo "<!-- END_TF_DOCS -->"    # Closing marker
                   } >> "$FILE"
+                  # Log that README was created/scaffolded
                   echo "Scaffolded $FILE with inject markers."
                   else
+                  # README exists and already has markers - no action needed
                   echo "Markers already present in $FILE"
                   fi
+              # Override the job-level working-directory for this specific step
               working-directory: ${{ matrix.path }}
 
-            # Generate README before init, and DO NOT push from terraform-docs
+            # Auto-generate README documentation from Terraform code
+            # This runs BEFORE terraform init to avoid backend requirements
             - name: Generate README with terraform-docs
+              # Use terraform-docs GitHub Action (version 1.3.0)
               uses: terraform-docs/gh-actions@v1.3.0
               with:
+                  # Directory containing the Terraform module to document
                   working-dir: ${{ matrix.path }}
+                  # File to write/update with generated documentation
                   output-file: README.md
+                  # inject: insert content between <!-- BEGIN_TF_DOCS --> and <!-- END_TF_DOCS --> markers
                   output-method: inject
+                  # Disable automatic git push (we'll commit manually later)
+                  # This gives us more control over the commit process
                   git-push: "false"
+                  # Format the output as a Markdown table
                   output-format: "markdown table"
+                  # Use 2-space indentation in generated content
                   indention: 2
 
+            # Fix file ownership issues caused by Docker-based actions
             - name: Fix workspace ownership (docker wrote as root)
+              # terraform-docs action runs in Docker and may create files as root user
+              # sudo chown: change owner/group recursively
+              # $(id -u):$(id -g): set owner to current user's UID and GID
+              # $GITHUB_WORKSPACE: environment variable pointing to workspace root
               run: sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE"
 
-            # Commit only README.md (same-repo PRs). Forks won't have write perms.
+            # Commit the generated README back to the PR branch
             - name: Commit README changes
+              # Only run for same-repo PRs (not forks)
+              # Forks don't have write permissions to push to source repo
+              # github.event.pull_request.head.repo.full_name: PR source repo (owner/name)
+              # github.repository: current repo (owner/name)
               if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+              # Use git-auto-commit action to commit and push changes
               uses: stefanzweifel/git-auto-commit-action@v5
               with:
+                  # Commit message following conventional commits format
                   commit_message: "docs(terraform-docs): update README for ${{ matrix.module }}"
+                  # Only commit changes to this specific module's README
                   file_pattern: ${{ matrix.path }}/README.md
+                  # Set commit author name to GitHub Actions bot
                   commit_user_name: "github-actions[bot]"
+                  # Set commit author email to GitHub Actions bot no-reply address
                   commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
 
+            # Install tflint (Terraform linter) tool
             - name: Install tflint
               run: |
+                  # Download and execute the official tflint installation script
+                  # curl -s: download silently (no progress bar)
+                  # | bash: pipe the script directly to bash for execution
                   curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+                  # Add tflint to PATH for subsequent steps
+                  # $HOME/.local/bin: default install location for tflint
+                  # >> $GITHUB_PATH: append to PATH environment variable for this job
                   echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+            # Initialize tflint (downloads plugins and rules)
             - name: tflint init
+              # --init: download required plugins defined in .tflint.hcl
               run: tflint --init
 
+            # Run tflint to check for Terraform issues and best practices
             - name: tflint run
+              # --recursive: lint all Terraform files in current directory and subdirectories
+              # Will fail the workflow if any issues are found
               run: tflint --recursive
 
+            # Initialize Terraform without configuring a backend
             - name: Terraform init (no backend)
+              # terraform init: initialize working directory, download providers
+              # -backend=false: skip backend configuration (we're just validating syntax)
+              # This is faster and doesn't require backend credentials
               run: terraform init -backend=false
 
+            # Validate Terraform configuration syntax and internal consistency
             - name: Terraform validate
+              # terraform validate: check configuration is syntactically valid
+              # Checks for: syntax errors, invalid references, type mismatches
+              # Requires terraform init to have been run first
               run: terraform validate
 
+            # Run tfsec security scanner on Terraform code
             - name: tfsec
+              # Use aquasecurity/tfsec-action to scan for security issues
+              # Checks for: security misconfigurations, compliance issues, best practices
+              # Version 1.0.0 of the tfsec GitHub Action
               uses: aquasecurity/tfsec-action@v1.0.0

@@ -1,5 +1,19 @@
-backend/** @misrasatyarth @atharveeam @VijayGohel @rishi-veeam
-frontend** @arpanmukh96 @VijayGohel @atharveeam @misrasatyarth
-.github/** @fatma-begum @rasha2veeam @bkumar-veeam
-terraform/** @fatma-begum @rasha2veeam @bkumar-veeam
-docs/** @fatma-begum @rasha2veeam @bkumar-veeam @misrasatyarth @arpanmukh96
+# CODEOWNERS file defines who is responsible for code in this repository
+# When a PR modifies files matching these patterns, the specified users/teams are automatically requested as reviewers
+# Format: <file-pattern> @github-username @github-username
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Backend code ownership - all files under backend directory
+backend/** @ran130987wan
+
+# Frontend code ownership - all files under frontend directory  
+frontend/** @ran130987wan
+
+# GitHub configuration ownership - workflows, templates, and repository settings
+.github/** @ran130987wan
+
+# Terraform infrastructure code ownership - all IaC modules and configurations
+terraform/** @ran130987wan
+
+# Documentation ownership - all files in the docs directory
+docs/** @ran130987wan

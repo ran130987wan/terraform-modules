@@ -1,35 +1,74 @@
 ---
+# YAML document separator (optional, indicates start of YAML file)
+# GitHub Actions workflow name - displayed in Actions tab and workflow runs
 name: "PR Auto Labeling"
 
+# Workflow trigger configuration - quoted "on" to avoid YAML reserved word conflict
 "on":
+  # Trigger on pull request events
   pull_request:
+    # Only run on these PR activity types:
+    # opened: when PR is first created
+    # synchronize: when new commits are pushed to the PR branch
+    # reopened: when a previously closed PR is reopened
     types: [opened, synchronize, reopened]
+    # Only trigger for PRs targeting these branches
     branches:
-      - master
+      - master  # Only label PRs targeting master branch
 
+# Concurrency control - prevents multiple runs from interfering with each other
 concurrency:
+  # Create unique concurrency group per workflow and git ref
+  # ${{ github.workflow }}: workflow name ("PR Auto Labeling")
+  # ${{ github.ref }}: git reference (e.g., "refs/pull/123/merge")
+  # This ensures different PRs can run concurrently but same PR cannot
   group: ${{ github.workflow }}-${{ github.ref }}
+  # Cancel any in-progress runs when new run is triggered
+  # Useful when rapid commits are pushed to same PR
   cancel-in-progress: true
 
+# GitHub Actions permissions - limits what this workflow can access/modify
 permissions:
+  # Read-only access to repository contents (code, files)
   contents: read
+  # Write access needed to add/modify labels on pull requests
   pull-requests: write
+  # Write access to OIDC token (OpenID Connect) for authentication
+  # Allows workflow to authenticate with external services
   id-token: write
 
+# Jobs section - contains all jobs this workflow executes
 jobs:
+  # Single job to apply labels to pull requests
   label-pr:
+    # Run on latest Ubuntu GitHub-hosted runner
     runs-on: 'ubuntu-latest'
+    # Steps executed sequentially within this job
     steps:
+      # Step 1: Checkout the repository code
       - name: Checkout code
+        # Use checkout action version 5 to clone repository
+        # This makes the code available for the labeler to analyze
         uses: actions/checkout@v5
 
+      # Step 2: Apply labels based on which files changed in the PR
       - name: Label PR based on changed files
+        # Use labeler action version 5 (reads config and applies labels)
         uses: actions/labeler@v5
         with:
+          # Path to labeler configuration file (defines file patterns -> labels mapping)
+          # This file contains rules like: "backend/**" -> "backend-utils" label
           configuration-path: ".github/labeler.yaml"
 
+      # Step 3: Add special label for hotfix branches
       - name: Add hotfix label for hotfix branches
+        # Conditional execution: only run if PR source branch starts with "hotfix/"
+        # github.head_ref: name of PR source branch (e.g., "hotfix/bug-123")
+        # startsWith(): built-in function to check string prefix
         if: startsWith(github.head_ref, 'hotfix/')
+        # Use action-add-labels action version 1 to add labels
         uses: actions-ecosystem/action-add-labels@v1
         with:
+          # Label name to apply
+          # Can be a single label or comma-separated list
           labels: "hotfix"

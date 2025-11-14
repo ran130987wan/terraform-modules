@@ -1,166 +1,312 @@
+# GitHub Actions workflow name - appears in the Actions tab
 name: "Terraform Module Tag (on merge)"
 
+# Workflow triggers - defines when this workflow runs
 on:
+  # Trigger on push events to master branch
   push:
-    branches: [master]
+    branches: [master]  # Only runs when pushing to master
     paths:
-      - "terraform/modules/**"
+      - "terraform/modules/**"  # Only runs if files in terraform/modules changed
 
+  # Trigger on pull requests targeting master branch
   pull_request:
-    branches: [master]
+    branches: [master]  # Only runs for PRs targeting master
     paths:
-      - "terraform/modules/**"
-      - ".github/workflows/terraform-module-tag.yml"
+      - "terraform/modules/**"  # Runs if terraform modules changed
+      - ".github/workflows/terraform-module-tag.yml"  # Or if this workflow file changed
 
+# Permissions required by this workflow
 permissions:
-  contents: write
-  pull-requests: read
+  contents: write  # Allows creating tags and pushing to the repository
+  pull-requests: read  # Allows reading PR information (labels, numbers, etc.)
 
+# Jobs section - contains all the jobs this workflow will execute
 jobs:
+  # First job: Detect which Terraform modules have changed
   detect_changed_modules:
-    runs-on: ubuntu-latest
-    environment: "dev"
+    runs-on: ubuntu-latest  # Run on Ubuntu runner
+    environment: "dev"  # Use the 'dev' environment configuration
     outputs:
+      # Export the matrix output to be used by the next job
       matrix: ${{ steps.collect.outputs.matrix }}
     steps:
+      # Checkout the repository with full history
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Fetch all history so we can compare commits
 
+      # Collect the list of changed modules
       - id: collect
         name: Collect changed modules for this event
         shell: bash
         run: |
+          # Bash error handling settings:
+          # -e: exit immediately if any command fails
+          # -u: treat unset variables as errors
+          # -o pipefail: return exit code of the last failing command in a pipeline
           set -euo pipefail
 
+          # Determine which files changed based on the event type
+          # Use [[ ]] for safer string comparison (handles spaces/special chars)
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            BEFORE="${{ github.event.before }}"
-            AFTER="${{ github.sha }}"
+            # For push events (after merge): compare two specific commits
+            BEFORE="${{ github.event.before }}"  # SHA of commit before the push
+            AFTER="${{ github.sha }}"  # SHA of the current commit (after push)
+            # Run git diff to get list of changed file names only, save to temp file
+            # || true prevents script from failing if git diff returns non-zero
             git diff --name-only "$BEFORE" "$AFTER" > /tmp/changed.txt || true
           else
-            # pull_request: compare base branch vs current HEAD
+            # For pull_request events: compare PR branch against target branch
+            # Fetch only the latest commit of the base branch (shallow fetch for speed)
             git fetch origin "${{ github.base_ref }}" --depth=1
+            # Three-dot diff compares merge base to HEAD (shows only PR changes)
             git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt || true
           fi
 
+          # Print changed files to workflow logs for debugging/visibility
           echo "Changed files:"
+          # Display contents of changed files list, || true prevents failure if file empty
           cat /tmp/changed.txt || true
 
+          # Extract unique module names using AWK:
+          # -F/ : Set field separator to forward slash
+          # /^terraform\/modules\/[^/]+\// : Match lines starting with terraform/modules/<something>/
+          # {print $3} : Print the 3rd field (module name after terraform/modules/)
+          # | sort -u : Sort alphabetically and remove duplicates (-u = unique)
           mods=$(awk -F/ '/^terraform\/modules\/[^/]+\// {print $3}' /tmp/changed.txt | sort -u)
+          
+          # Check if $mods variable is empty (no modules changed)
           if [ -z "$mods" ]; then
+            # Log that no modules were modified
             echo "No module changes."
+            # Create empty JSON array for matrix (no jobs will run)
             echo '{"include":[]}' > /tmp/matrix.json
           else
+            # Log which modules were detected as changed
             echo "Modules changed: $mods"
+            # Start building JSON matrix object, write opening to file
             printf '{"include":[' > /tmp/matrix.json
+            # Track if this is the first item (to handle comma placement)
             first=1
+            # Loop through each module name in the space-separated list
             for m in $mods; do
+              # Add comma before items after the first one (JSON array formatting)
               if [ $first -eq 0 ]; then printf ',' >> /tmp/matrix.json; fi
+              # Create JSON object with module name and path, append to file
+              # Format: {"module":"aks","path":"terraform/modules/aks"}
               printf '{"module":"%s","path":"terraform/modules/%s"}' "$m" "$m" >> /tmp/matrix.json
+              # After first iteration, set flag to add commas
               first=0
             done
+            # Close the JSON array with closing bracket
             printf ']}' >> /tmp/matrix.json
           fi
 
+          # Read the matrix JSON and set it as a step output variable
+          # This makes it available to subsequent jobs via needs.detect_changed_modules.outputs.matrix
+          # $GITHUB_OUTPUT is a special file that GitHub Actions reads for output values
           echo "matrix=$(cat /tmp/matrix.json)" >> $GITHUB_OUTPUT
 
+  # Second job: Create version tags for each changed module
   make_tags:
-    needs: detect_changed_modules
+    needs: detect_changed_modules  # Wait for the first job to complete
+    # Only run if there are modules in the matrix (i.e., changes detected)
     if: ${{ fromJson(needs.detect_changed_modules.outputs.matrix).include != null && fromJson(needs.detect_changed_modules.outputs.matrix).include[0] != null }}
-    runs-on: ubuntu-latest
-    environment: "dev"
+    runs-on: ubuntu-latest  # Run on Ubuntu runner
+    environment: "dev"  # Use dev environment
     strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}
+      fail-fast: false  # Continue running other matrix jobs even if one fails
+      matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}  # Run once per changed module
     steps:
+      # Checkout repository with full history for version comparison
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Need full history to find existing tags
 
+      # Determine whether to bump major, minor, or patch version
       - name: Determine bump type from PR labels / commit message
         id: bump
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}  # GitHub token for API access
         shell: bash
         run: |
+          # Enable strict error handling
           set -euo pipefail
+          # Initialize BUMP variable with default value of "patch" (smallest version increment)
           BUMP="patch"
 
-          # If this push is from a merged PR, read its labels; for PR runs, read current PR labels
+          # Retrieve PR labels to determine semantic version bump type
+          # Different logic for push vs pull_request events
           if [[ "${{ github.event_name }}" == "push" ]]; then
+            # For push events: the PR has already been merged, so we need to find it
+            # Use GitHub API to find PRs associated with this commit SHA
+            # gh api: GitHub CLI API command
+            # --jq '.[0].number': Use jq to extract the first PR's number from JSON response
+            # || true: Don't fail if API call fails or returns no results
             PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].number' || true)
+            # Check if PR_NUMBER was successfully retrieved and is not null
+            # -n checks if string is not empty, ${PR_NUMBER:-} uses empty string if unset
             if [[ -n "${PR_NUMBER:-}" && "${PR_NUMBER:-null}" != "null" ]]; then
+              # Fetch the PR's labels using GitHub CLI
+              # --json labels: Request labels field in JSON format
+              # --jq '.labels[].name': Extract just the label names from the array
               LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' || true)
             fi
           else
+            # For pull_request events: directly access the current PR
+            # ${{ github.event.number }} contains the PR number from the event payload
             LABELS=$(gh pr view ${{ github.event.number }} --json labels --jq '.labels[].name' || true)
           fi
 
+          # Parse labels to determine version bump (semver labels take precedence)
+          # -n checks if LABELS variable is not empty
           if [[ -n "${LABELS:-}" ]]; then
+            # grep -qiE: search quietly (-q) case-insensitively (-i) with extended regex (-E)
+            # ^semver:major$: matches exactly "semver:major" (^ = start, $ = end)
+            # && BUMP="major": if match found, set BUMP to major
             echo "$LABELS" | grep -qiE '^semver:major$' && BUMP="major"
+            # Check for minor version label
             echo "$LABELS" | grep -qiE '^semver:minor$' && BUMP="minor"
+            # Check for patch version label (explicitly set, though it's already default)
             echo "$LABELS" | grep -qiE '^semver:patch$' && BUMP="patch"
           fi
 
+          # Fallback: check commit message for conventional commit format
+          # git log -1: show only the last commit
+          # --pretty=%B: format as commit body/message only
           MSG=$(git log -1 --pretty=%B || true)
+          # Search for "BREAKING CHANGE" in commit message (indicates major version)
+          # grep -q: quiet mode, only return exit code (0 if found)
           if echo "$MSG" | grep -q "BREAKING CHANGE"; then
+            # Breaking changes always override to major version bump
             BUMP="major"
+          # Check if commit starts with "feat" or "feat(" or "feat:" (new feature)
           elif echo "$MSG" | grep -qiE '^feat(\(|:)?'; then
+            # Features bump minor version, but only if not already set to major
+            # [[ ]] is bash conditional test
             [[ "$BUMP" == "patch" ]] && BUMP="minor"
           fi
 
+          # Write the determined bump type to GitHub Actions output file
+          # This makes it available in subsequent steps as ${{ steps.bump.outputs.bump }}
           echo "bump=$BUMP" >> $GITHUB_OUTPUT
 
+      # Calculate the next semantic version number
       - name: Compute next version for module ${{ matrix.module }}
         id: version
         shell: bash
         run: |
+          # Enable strict bash error handling
           set -euo pipefail
+          # Get the module name from the matrix (e.g., "aks", "acr", "apim")
           MOD="${{ matrix.module }}"
+          # Create tag prefix by appending slash (e.g., "aks/" for module "aks")
           PREFIX="${MOD}/"
 
+          # Find the most recent version tag for this specific module:
+          # git tag --list "${PREFIX}v*": list all tags matching pattern like "aks/v*"
+          # | sort -V: version-aware sort (understands 1.10 > 1.9)
+          # | tail -n1: get only the last (most recent) tag
           LAST=$(git tag --list "${PREFIX}v*" | sort -V | tail -n1)
+          # Remove the prefix and 'v' to extract version number
+          # ${LAST#${PREFIX}v}: parameter expansion removes "aks/v" from "aks/v1.2.3" -> "1.2.3"
           BASE="${LAST#${PREFIX}v}"
+          # If no previous tags exist (LAST is empty), initialize to version 0.0.0
+          # [[ -z "$LAST" ]]: test if LAST variable is zero-length (empty)
           [[ -z "$LAST" ]] && BASE="0.0.0"
 
+          # Split version string into three variables using period as delimiter:
+          # IFS='.': set Internal Field Separator to period (temporarily)
+          # read -r: read without backslash escaping
+          # MAJOR MINOR PATCH: assign fields to these three variables
+          # <<< "$BASE": here-string input (feeds string to read command)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+          
+          # Increment version based on bump type using case statement
           case "${{ steps.bump.outputs.bump }}" in
-            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH+1)) ;;
+            # Major bump: increment MAJOR, reset MINOR and PATCH to 0
+            # $((MAJOR+1)): arithmetic expansion to add 1
+            # Semicolons separate multiple commands in same case branch
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;  # Example: 1.2.3 -> 2.0.0
+            # Minor bump: increment MINOR, reset PATCH to 0, keep MAJOR
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;           # Example: 1.2.3 -> 1.3.0
+            # Patch bump: only increment PATCH, keep MAJOR and MINOR
+            patch) PATCH=$((PATCH+1)) ;;                    # Example: 1.2.3 -> 1.2.4
           esac
 
+          # Construct version strings for output:
+          # NEXT: version with 'v' prefix (e.g., "v1.3.0")
           NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          # FULL: complete tag name with module prefix (e.g., "aks/v1.3.0")
           FULL="${PREFIX}${NEXT}"
 
+          # Export variables as step outputs for use in subsequent steps
+          # >> $GITHUB_OUTPUT: append to GitHub Actions output file
           echo "next=${NEXT}"  >> $GITHUB_OUTPUT
           echo "full=${FULL}"  >> $GITHUB_OUTPUT
+          # Log the version progression to workflow console (for debugging)
+          # ${LAST:-<none>}: if LAST is empty, display "<none>"
           echo "Last: ${LAST:-<none>}  Next: $FULL"
 
+      # Display the tag in the workflow summary (visible in GitHub UI)
       - name: Show planned tag (PRs) / created tag (push) in summary
         shell: bash
         run: |
+          # Display appropriate message in GitHub Actions summary based on event type
+          # [[ ]] is bash conditional test for string comparison
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # For pull requests: show preview of what tag WOULD be created (not created yet)
+            # echo: write text to output
+            # ###: Markdown heading level 3
+            # \`: escaped backticks for inline code formatting in Markdown
+            # >> "$GITHUB_STEP_SUMMARY": append to GitHub Actions summary file (shown in UI)
             echo "### Planned tag for \`${{ matrix.module }}\`" >> "$GITHUB_STEP_SUMMARY"
+            # Show the full tag name and bump type in code formatting
             echo "\`${{ steps.version.outputs.full }}\` (bump: \`${{ steps.bump.outputs.bump }}\`)" >> "$GITHUB_STEP_SUMMARY"
           else
+            # For push events: tag has been created, show confirmation
             echo "### Created tag for \`${{ matrix.module }}\`" >> "$GITHUB_STEP_SUMMARY"
+            # Display the actual created tag and bump type
             echo "\`${{ steps.version.outputs.full }}\` (bump: \`${{ steps.bump.outputs.bump }}\`)" >> "$GITHUB_STEP_SUMMARY"
           fi
+      # Configure git user identity required for creating annotated tags
       - name: Configure Git identity (for annotated tags)
-        if: ${{ github.event_name == 'push' }}
+        # Conditional execution: only run this step for push events (skip for PRs)
+        # ${{ }} is GitHub Actions expression syntax
+        if: ${{ github.event_name == 'push' }}  # Only on actual merges, not PRs
         run: |
+          # Set global git user name to github-actions bot
+          # This will appear as the author of the tag in git history
           git config user.name  "github-actions[bot]"
+          # Set global git email address
+          # 41898282 is the user ID for github-actions[bot] user
+          # @users.noreply.github.com is GitHub's no-reply email domain
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # ⬇️ Only push the tag on 'push' events. PRs will skip this step.
+      # Create and push the version tag to the repository
       - name: Create and push tag ${{ steps.version.outputs.full }}
+        # Only execute this step on push events (after PR merge), not during PR review
         if: ${{ github.event_name == 'push' }}
         env:
+          # Set GitHub token as environment variable for authentication
+          # secrets.GH_TOKEN must be configured in repository/organization secrets
+          # This token needs 'contents: write' permission to push tags
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        shell: bash
+        shell: bash  # Explicitly use bash shell
         run: |
+          # Enable strict error handling:
+          # -e: exit on error, -u: error on undefined vars, -o pipefail: catch pipe errors
           set -euo pipefail
+          # Store the complete tag name in variable (e.g., "aks/v1.3.0")
           TAG="${{ steps.version.outputs.full }}"
+          # Create an annotated git tag:
+          # git tag: tag creation command
+          # -a "$TAG": create annotated tag (includes metadata like author, date)
+          # -m "...": provide tag message/annotation
           git tag -a "$TAG" -m "Release $TAG (module ${{ matrix.module }})"
+          # Push the newly created tag to the remote repository:
+          # git push: push to remote
+          # origin: default remote name (GitHub repository)
+          # "$TAG": push only this specific tag (not all tags or branches)
           git push origin "$TAG"

@@ -2,49 +2,73 @@
 # Maps file/folder patterns to labels for automatic PR labeling
 
 # Component labels based on file paths
+# These labels categorize PRs by which part of the codebase was modified
+
 backend-utils:
+  # Label name that will be applied to the PR
   - changed-files:
+      # Condition: checks if any files were changed
       - any-glob-to-any-file:
+          # Glob pattern: matches any file under the backend directory
           - "backend/**"
 
 frontend-utils:
+  # Label applied when frontend files are modified
   - changed-files:
       - any-glob-to-any-file:
+          # Matches all files in the frontend directory and subdirectories
           - "frontend/**"
 
 # Purpose labels
+# These labels indicate the type or purpose of the changes
 
 cicd:
+  # Label for continuous integration/deployment related changes
   - changed-files:
       - any-glob-to-any-file:
+          # Matches any file in .github directory (workflows, configs, etc.)
           - ".github/**"
+          # Specifically matches GitHub Actions workflow files
           - ".github/workflows/**"
 
 platform:
+  # Label for platform infrastructure changes
   - changed-files:
       - any-glob-to-any-file:
+          # Matches all Terraform infrastructure files
           - "terraform/**"
 
 gh-actions:
+  # Another label for GitHub Actions changes (duplicate pattern with cicd)
   - changed-files:
       - any-glob-to-any-file:
+          # Matches all GitHub configuration files
           - ".github/**"
 
 iac-utils:
+  # Label for Infrastructure as Code utilities (duplicate pattern with platform)
   - changed-files:
       - any-glob-to-any-file:
+          # Matches Terraform modules and configurations
           - "terraform/**"
 
 miscellaneous:
+  # Label for documentation and other miscellaneous changes
   - changed-files:
       - any-glob-to-any-file:
+          # Matches all documentation files
           - "docs/**"
 
 documentation:
+  # Specific label for documentation changes (duplicate pattern with miscellaneous)
   - changed-files:
       - any-glob-to-any-file:
+          # Matches all files in the docs directory
           - "docs/**"
 
 # Branch-based label for hotfix detection
+# This label is applied based on the branch name, not file changes
 hotfix:
+  # Condition: checks the name of the PR's source branch (head branch)
   - head-branch: ["hotfix/*"]
+  # Matches any branch starting with "hotfix/" (e.g., hotfix/bug-123)
