@@ -26,7 +26,6 @@ jobs:
   # First job: Detect which Terraform modules have changed
   detect_changed_modules:
     runs-on: ubuntu-latest  # Run on Ubuntu runner
-    environment: "dev"  # Use the 'dev' environment configuration
     outputs:
       # Export the matrix output to be used by the next job
       matrix: ${{ steps.collect.outputs.matrix }}
@@ -114,7 +113,6 @@ jobs:
     # Only run if there are modules in the matrix (i.e., changes detected)
     if: ${{ fromJson(needs.detect_changed_modules.outputs.matrix).include != null && fromJson(needs.detect_changed_modules.outputs.matrix).include[0] != null }}
     runs-on: ubuntu-latest  # Run on Ubuntu runner
-    environment: "dev"  # Use dev environment
     strategy:
       fail-fast: false  # Continue running other matrix jobs even if one fails
       matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}  # Run once per changed module
@@ -193,7 +191,7 @@ jobs:
           fi
 
           # Write the determined bump type to GitHub Actions output file
-          # This makes it available in subsequent steps as ${{ steps.bump.outputs.bump }}
+          # This makes it available in subsequent steps via steps.bump.outputs.bump
           echo "bump=$BUMP" >> $GITHUB_OUTPUT
 
       # Calculate the next semantic version number
