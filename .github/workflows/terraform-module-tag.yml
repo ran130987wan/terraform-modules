@@ -1,0 +1,166 @@
+name: "Terraform Module Tag (on merge)"
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "terraform/modules/**"
+
+  pull_request:
+    branches: [master]
+    paths:
+      - "terraform/modules/**"
+      - ".github/workflows/terraform-module-tag.yml"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  detect_changed_modules:
+    runs-on: ubuntu-latest
+    environment: "dev"
+    outputs:
+      matrix: ${{ steps.collect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: collect
+        name: Collect changed modules for this event
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.sha }}"
+            git diff --name-only "$BEFORE" "$AFTER" > /tmp/changed.txt || true
+          else
+            # pull_request: compare base branch vs current HEAD
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" > /tmp/changed.txt || true
+          fi
+
+          echo "Changed files:"
+          cat /tmp/changed.txt || true
+
+          mods=$(awk -F/ '/^terraform\/modules\/[^/]+\// {print $3}' /tmp/changed.txt | sort -u)
+          if [ -z "$mods" ]; then
+            echo "No module changes."
+            echo '{"include":[]}' > /tmp/matrix.json
+          else
+            echo "Modules changed: $mods"
+            printf '{"include":[' > /tmp/matrix.json
+            first=1
+            for m in $mods; do
+              if [ $first -eq 0 ]; then printf ',' >> /tmp/matrix.json; fi
+              printf '{"module":"%s","path":"terraform/modules/%s"}' "$m" "$m" >> /tmp/matrix.json
+              first=0
+            done
+            printf ']}' >> /tmp/matrix.json
+          fi
+
+          echo "matrix=$(cat /tmp/matrix.json)" >> $GITHUB_OUTPUT
+
+  make_tags:
+    needs: detect_changed_modules
+    if: ${{ fromJson(needs.detect_changed_modules.outputs.matrix).include != null && fromJson(needs.detect_changed_modules.outputs.matrix).include[0] != null }}
+    runs-on: ubuntu-latest
+    environment: "dev"
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine bump type from PR labels / commit message
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUMP="patch"
+
+          # If this push is from a merged PR, read its labels; for PR runs, read current PR labels
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            PR_NUMBER=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/pulls --jq '.[0].number' || true)
+            if [[ -n "${PR_NUMBER:-}" && "${PR_NUMBER:-null}" != "null" ]]; then
+              LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' || true)
+            fi
+          else
+            LABELS=$(gh pr view ${{ github.event.number }} --json labels --jq '.labels[].name' || true)
+          fi
+
+          if [[ -n "${LABELS:-}" ]]; then
+            echo "$LABELS" | grep -qiE '^semver:major$' && BUMP="major"
+            echo "$LABELS" | grep -qiE '^semver:minor$' && BUMP="minor"
+            echo "$LABELS" | grep -qiE '^semver:patch$' && BUMP="patch"
+          fi
+
+          MSG=$(git log -1 --pretty=%B || true)
+          if echo "$MSG" | grep -q "BREAKING CHANGE"; then
+            BUMP="major"
+          elif echo "$MSG" | grep -qiE '^feat(\(|:)?'; then
+            [[ "$BUMP" == "patch" ]] && BUMP="minor"
+          fi
+
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+
+      - name: Compute next version for module ${{ matrix.module }}
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          MOD="${{ matrix.module }}"
+          PREFIX="${MOD}/"
+
+          LAST=$(git tag --list "${PREFIX}v*" | sort -V | tail -n1)
+          BASE="${LAST#${PREFIX}v}"
+          [[ -z "$LAST" ]] && BASE="0.0.0"
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+          case "${{ steps.bump.outputs.bump }}" in
+            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH+1)) ;;
+          esac
+
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          FULL="${PREFIX}${NEXT}"
+
+          echo "next=${NEXT}"  >> $GITHUB_OUTPUT
+          echo "full=${FULL}"  >> $GITHUB_OUTPUT
+          echo "Last: ${LAST:-<none>}  Next: $FULL"
+
+      - name: Show planned tag (PRs) / created tag (push) in summary
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "### Planned tag for \`${{ matrix.module }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`${{ steps.version.outputs.full }}\` (bump: \`${{ steps.bump.outputs.bump }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Created tag for \`${{ matrix.module }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`${{ steps.version.outputs.full }}\` (bump: \`${{ steps.bump.outputs.bump }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Configure Git identity (for annotated tags)
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # ⬇️ Only push the tag on 'push' events. PRs will skip this step.
+      - name: Create and push tag ${{ steps.version.outputs.full }}
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.full }}"
+          git tag -a "$TAG" -m "Release $TAG (module ${{ matrix.module }})"
+          git push origin "$TAG"

@@ -1,0 +1,139 @@
+name: "Terraform Module CI (PR)"
+
+on:
+    pull_request:
+        branches: [master] 
+        paths:
+            - "terraform/modules/**"
+            - ".github/workflows/terraform-*"
+
+permissions:
+    contents: write # <-- was read; needs write to push README updates
+    pull-requests: write
+
+jobs:
+    detect_changed_modules:
+        name: Detect changed modules
+        runs-on: ubuntu-latest
+        outputs:
+            matrix: ${{ steps.collect.outputs.matrix }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - id: diff
+              name: Find changed files
+              run: |
+                  git fetch origin ${{ github.base_ref }} --depth=1
+                  git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed.txt
+                  echo "Changed files:"
+                  cat /tmp/changed.txt
+
+            - id: collect
+              name: Collect changed module directories into a matrix
+              run: |
+                  mods=$(awk -F/ '/^terraform\/modules\/[^/]+\// {print $3}' /tmp/changed.txt | sort -u)
+                  if [ -z "$mods" ]; then
+                    echo "No module changes detected."
+                    echo '{"include":[]}' > /tmp/matrix.json
+                  else
+                    echo "Modules changed: $mods"
+                    printf '{"include":[' > /tmp/matrix.json
+                    first=1
+                    for m in $mods; do
+                      if [ $first -eq 0 ]; then printf ',' >> /tmp/matrix.json; fi
+                      printf '{"module":"%s","path":"terraform/modules/%s"}' "$m" "$m" >> /tmp/matrix.json
+                      first=0
+                    done
+                    printf ']}' >> /tmp/matrix.json
+                  fi
+                  echo "matrix=$(cat /tmp/matrix.json)" >> $GITHUB_OUTPUT
+
+    lint_validate:
+        name: Lint & Validate (${{ matrix.module }})
+        needs: detect_changed_modules
+        if: ${{ fromJson(needs.detect_changed_modules.outputs.matrix).include != null && fromJson(needs.detect_changed_modules.outputs.matrix).include[0] != null }}
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix: ${{ fromJson(needs.detect_changed_modules.outputs.matrix) }}
+        defaults:
+            run:
+                working-directory: ${{ matrix.path }}
+
+        steps:
+            # Checkout the PR branch (not detached) so we can push README updates
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ github.event.pull_request.head.ref }}
+                  repository: ${{ github.event.pull_request.head.repo.full_name }}
+                  persist-credentials: true
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: "1.12.2"
+
+            - name: Terraform fmt (check)
+              run: terraform fmt -check -recursive
+
+            - name: Ensure README has inject markers
+              run: |
+                  FILE="README.md"
+                  if [ ! -f "$FILE" ] || ! grep -q "<!-- BEGIN_TF_DOCS -->" "$FILE"; then
+                  echo "# ${{ matrix.module }}" > "$FILE"
+                  {
+                      echo
+                      echo "<!-- BEGIN_TF_DOCS -->"
+                      echo "<!-- END_TF_DOCS -->"
+                  } >> "$FILE"
+                  echo "Scaffolded $FILE with inject markers."
+                  else
+                  echo "Markers already present in $FILE"
+                  fi
+              working-directory: ${{ matrix.path }}
+
+            # Generate README before init, and DO NOT push from terraform-docs
+            - name: Generate README with terraform-docs
+              uses: terraform-docs/gh-actions@v1.3.0
+              with:
+                  working-dir: ${{ matrix.path }}
+                  output-file: README.md
+                  output-method: inject
+                  git-push: "false"
+                  output-format: "markdown table"
+                  indention: 2
+
+            - name: Fix workspace ownership (docker wrote as root)
+              run: sudo chown -R $(id -u):$(id -g) "$GITHUB_WORKSPACE"
+
+            # Commit only README.md (same-repo PRs). Forks won't have write perms.
+            - name: Commit README changes
+              if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+              uses: stefanzweifel/git-auto-commit-action@v5
+              with:
+                  commit_message: "docs(terraform-docs): update README for ${{ matrix.module }}"
+                  file_pattern: ${{ matrix.path }}/README.md
+                  commit_user_name: "github-actions[bot]"
+                  commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+
+            - name: Install tflint
+              run: |
+                  curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+                  echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+            - name: tflint init
+              run: tflint --init
+
+            - name: tflint run
+              run: tflint --recursive
+
+            - name: Terraform init (no backend)
+              run: terraform init -backend=false
+
+            - name: Terraform validate
+              run: terraform validate
+
+            - name: tfsec
+              uses: aquasecurity/tfsec-action@v1.0.0

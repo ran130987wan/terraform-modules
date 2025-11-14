@@ -1,0 +1,35 @@
+---
+name: "PR Auto Labeling"
+
+"on":
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  label-pr:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Label PR based on changed files
+        uses: actions/labeler@v5
+        with:
+          configuration-path: ".github/labeler.yaml"
+
+      - name: Add hotfix label for hotfix branches
+        if: startsWith(github.head_ref, 'hotfix/')
+        uses: actions-ecosystem/action-add-labels@v1
+        with:
+          labels: "hotfix"

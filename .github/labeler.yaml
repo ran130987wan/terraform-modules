@@ -1,0 +1,50 @@
+# Configuration file for GitHub Actions labeler
+# Maps file/folder patterns to labels for automatic PR labeling
+
+# Component labels based on file paths
+backend-utils:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "backend/**"
+
+frontend-utils:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "frontend/**"
+
+# Purpose labels
+
+cicd:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - ".github/workflows/**"
+
+platform:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "terraform/**"
+
+gh-actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+
+iac-utils:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "terraform/**"
+
+miscellaneous:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+
+# Branch-based label for hotfix detection
+hotfix:
+  - head-branch: ["hotfix/*"]
